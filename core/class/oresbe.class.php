@@ -130,9 +130,17 @@ class oresbe extends eqLogic {
     }
 
     private function addressSignature() {
+        /*
+         * On inclut la forme TEXTE du numéro (3A, 3B) et pas seulement
+         * l'entier dérivé : passer de « 3A » à « 3B » doit invalider le
+         * cache alors que l'entier reste 3. Les ranges ORES font parfois la
+         * distinction via leurs suffixes (3/RT, 3/A), donc deux adresses
+         * littéralement différentes peuvent légitimement avoir des
+         * incidents distincts.
+         */
         return $this->getConfiguration('zipcode')
              . '|' . self::normalizeStreet($this->getConfiguration('street'))
-             . '|' . $this->getConfiguration('houseNumberInt');
+             . '|' . $this->getConfiguration('houseNumber');
     }
 
     /* ======================================================================= CACHE */
@@ -316,13 +324,30 @@ class oresbe extends eqLogic {
     /*
      * Récupère toutes les pannes actives. L'API ne filtre pas côté serveur :
      * on prend le payload complet (~300 Ko, ~350 pannes en Wallonie).
+     *
+     * Cache partagé entre tous les équipements du plugin : sans ça, N
+     * adresses surveillées = N × 300 Ko à chaque cron (maison, grand-mère,
+     * appart'…). 300 s suffisent largement : le cron15 déclenche
+     * l'ensemble en l'espace de quelques secondes, c'est le seul moment
+     * où plusieurs équipements fetchent au même instant.
      */
+    const RAW_CACHE_TTL = 300;
+
     public static function fetchAllBreakdowns() {
+        $cached = cache::byKey('oresbe::rawBreakdowns')->getValue('');
+        if ($cached !== '') {
+            $wrap = json_decode($cached, true);
+            if (is_array($wrap) && isset($wrap['data']) && is_array($wrap['data'])) {
+                return $wrap['data'];
+            }
+        }
+
         $json = self::httpGet(self::API_URL);
         $data = json_decode($json, true);
         if (!is_array($data)) {
             throw new Exception(__('Réponse inattendue de l\'API ORES : JSON invalide.', __FILE__));
         }
+        cache::set('oresbe::rawBreakdowns', json_encode(array('fetchedAt' => time(), 'data' => $data)), self::RAW_CACHE_TTL);
         return $data;
     }
 

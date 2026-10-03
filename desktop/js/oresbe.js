@@ -77,14 +77,6 @@ function oresbeIsDisplayed(_id) {
 /* ========================================================= ALERTES — RENDU */
 
 /*
- * Vrai pendant la reconstruction de l'onglet Alertes : poser une valeur dans
- * un champ émet « change » exactement comme une saisie, et sans ce drapeau,
- * ouvrir un équipement suffirait à le déclarer modifié, l'avertissement
- * « quitter sans enregistrer ? » tomberait sans que rien n'ait été touché.
- */
-var oresbeRendering = false
-
-/*
  * Jeedom appelle une fonction nommée saveEqLogic juste avant d'envoyer le
  * formulaire : le hook magique de plugin.template.js nous laisse injecter
  * la liste d'alertes, qu'un data-l1key ne saurait pas sérialiser (quatre
@@ -106,16 +98,11 @@ function printEqLogic(_eqLogic) {
 function oresbeRenderNotifications(_eqLogic) {
   var container = document.getElementById('div_oresbeNotifications')
   if (container === null) { return }
-  oresbeRendering = true
-  try {
-    while (container.firstChild) { container.removeChild(container.firstChild) }
-    var list = (_eqLogic && _eqLogic.configuration && _eqLogic.configuration.notifications)
-      ? _eqLogic.configuration.notifications : []
-    if (!Array.isArray(list)) { list = [] }
-    list.forEach(function (n) { oresbeAppendNotification(n) })
-  } finally {
-    oresbeRendering = false
-  }
+  while (container.firstChild) { container.removeChild(container.firstChild) }
+  var list = (_eqLogic && _eqLogic.configuration && _eqLogic.configuration.notifications)
+    ? _eqLogic.configuration.notifications : []
+  if (!Array.isArray(list)) { list = [] }
+  list.forEach(function (n) { oresbeAppendNotification(n) })
 }
 
 function oresbeNewId() {
@@ -170,7 +157,7 @@ function oresbeAppendNotification(_notification) {
 
       '<fieldset style="margin-top:15px;">' +
         '<legend style="font-size:13px;">' +
-          '<i class="fas fa-stop-circle"></i> {{Actions à la fin de l\'incident}} <small class="text-muted">({{optionnel : jouées quand l\'incident disparaît du site SWDE, ex. effacer un affichage matrix}})</small> ' +
+          '<i class="fas fa-stop-circle"></i> {{Actions à la fin de l\'incident}} <small class="text-muted">({{optionnel : jouées quand la panne disparaît de l\'API ORES, ex. effacer un affichage matrix}})</small> ' +
           '<a class="btn btn-info btn-xs bt_oresbeTestNotification" data-which="endActions" style="margin-left:10px;">' +
             '<i class="fas fa-vial"></i> {{Tester}}' +
           '</a>' +
