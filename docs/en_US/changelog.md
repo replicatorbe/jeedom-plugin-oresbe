@@ -13,6 +13,6 @@
   per-equipment memory of notified `businessId` to prevent re-triggering.
 - Tokens: `#titre#`, `#type#`, `#debut#`, `#fin#`, `#retard#`,
   `#clients#`, `#rue#`, `#generateur#`, `#url#`, `#equipement#`, `#cp#`.
-- 15 min cron, 15 min cache, 1 h backoff after HTTP failure.
+- 15 min cron, 5 min cache shared between devices, 1 h backoff after HTTP failure.
 - Explicit note in UI and doc: gas is not covered — ORES provides no gas
   outage API.

@@ -19,4 +19,4 @@
   `#clients#`, `#rue#`, `#generateur#`, `#url#`, `#equipement#`, `#cp#`.
 - Note explicite dans l'UI et la doc : le gaz n'est pas couvert, ORES ne
   publie pas d'API pour les coupures gaz.
-- cron15 min, cache 15 min, backoff 1 h après échec HTTP.
+- cron15 min, cache 5 min partagé entre équipements, backoff 1 h après échec HTTP.
