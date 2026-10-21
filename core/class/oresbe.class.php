@@ -37,6 +37,11 @@ class oresbe extends eqLogic {
 
     const SENT_MEMORY = 604800;  // 7 jours : couvre les plus longues interventions planifiées
 
+    /* Délai sans communication au-delà duquel le cœur signale l'équipement :
+     * une lecture en échec ne rafraîchit plus la date de communication (voir
+     * publishCmd), une heure couvre un backoff complet. */
+    const TIMEOUT_MINUTES = 60;
+
     /*
      * Mêmes blocs refusés que swdebe : les actions d'alerte sont jouées dans
      * le cron partagé par tous les plugins, qui serait tué au bout de cinq
@@ -49,6 +54,7 @@ class oresbe extends eqLogic {
 
     private $_refreshError = '';
     private $_refreshInfo  = '';
+    private $_stale        = false;  // une erreur de lecture est en cours
 
     /* ======================================================================= CRON */
 
@@ -93,6 +99,12 @@ class oresbe extends eqLogic {
 
         if ($this->getDisplay('width') == '') {
             $this->setDisplay('width', '320px');
+        }
+
+        /* Posé une seule fois, comme meteobelgiqueirm : ensuite c'est le
+         * choix de l'utilisateur. */
+        if ((int) $this->getTimeout() === 0) {
+            $this->setTimeout(self::TIMEOUT_MINUTES);
         }
     }
 
@@ -148,10 +160,22 @@ class oresbe extends eqLogic {
     private function stateKey() { return 'oresbe::state::' . $this->getId(); }
     private function retryKey() { return 'oresbe::retry::' . $this->getId(); }
     private function seenKey()  { return 'oresbe::seen::'  . $this->getId(); }
+    private function errorKey() { return 'oresbe::error::' . $this->getId(); }
 
     private function clearState() {
         cache::delete($this->stateKey());
         cache::delete($this->retryKey());
+        cache::delete($this->errorKey());
+    }
+
+    /* Dernière erreur de lecture, { message, at }, ou tableau vide si la
+     * dernière lecture a réussi. Sans expiration, contrairement à retryKey :
+     * l'erreur reste affichée jusqu'au prochain succès, backoff compris. */
+    public function getLastError() {
+        $value = cache::byKey($this->errorKey())->getValue('');
+        if ($value === '') return array();
+        $error = json_decode($value, true);
+        return is_array($error) ? $error : array();
     }
 
     public function getState() {
@@ -221,6 +245,15 @@ class oresbe extends eqLogic {
         $this->addCmdIfMissing('details', 'Détails (JSON)', 'info', 'string', array(
             'order' => $o++, 'isVisible' => 0,
         ));
+        $this->addCmdIfMissing('derniere_verification', 'Dernière vérification', 'info', 'string', array(
+            'order' => $o++, 'icon' => 'fas fa-clock',
+        ));
+        $this->addCmdIfMissing('erreur', 'Erreur API', 'info', 'binary', array(
+            'order' => $o++, 'icon' => 'fas fa-unlink',
+        ));
+        $this->addCmdIfMissing('derniere_erreur', 'Dernière erreur', 'info', 'string', array(
+            'order' => $o++, 'isVisible' => 0,
+        ));
         $this->addCmdIfMissing('refresh', 'Rafraîchir', 'action', 'other', array(
             'order' => $o++, 'icon' => 'fas fa-sync',
         ));
@@ -234,14 +267,18 @@ class oresbe extends eqLogic {
         /* Même précaution que swdebe : ne pas réécrire une commande déjà vide
          * sinon le cœur émet un évènement de changement à chaque cron. Et
          * JAMAIS appeler cette méthode setCmd() : le cœur appelle set + clé
-         * de formulaire à l'enregistrement et casserait tout. */
+         * de formulaire à l'enregistrement et casserait tout.
+         *
+         * Pendant une erreur de lecture, l'ancien état est republié avec une
+         * date à false : une valeur inchangée ne rafraîchit plus la dernière
+         * communication de l'équipement, et le timeout du cœur peut jouer. */
         if ($_value === '') {
             $cmd = $this->getCmd(null, $_logicalId);
             if (is_object($cmd) && $cmd->execCmd() === '') {
                 return;
             }
         }
-        $this->checkAndUpdateCmd($_logicalId, $_value);
+        $this->checkAndUpdateCmd($_logicalId, $_value, $this->_stale ? false : null);
     }
 
     /* ============================================================== RAFRAICHISSEMENT */
@@ -263,11 +300,7 @@ class oresbe extends eqLogic {
             $this->_refreshInfo = __('Lecture ignorée : état mis à jour il y a moins de 5 minutes.', __FILE__);
         }
 
-        $minutes = (int) config::byKey('refresh_minutes', __CLASS__, self::DEFAULT_REFRESH_MINUTES);
-        if ($minutes < self::MIN_REFRESH_MINUTES) {
-            $minutes = self::MIN_REFRESH_MINUTES;
-        }
-        $ttl     = $minutes * 60;
+        $ttl     = self::refreshTtl();
         $waiting = (cache::byKey($this->retryKey())->getValue('') !== '');
         if ($waiting && $_force) {
             $_force = false;
@@ -280,6 +313,7 @@ class oresbe extends eqLogic {
                 $state = $fresh;
                 cache::set($this->stateKey(), json_encode($state), 0);
                 cache::delete($this->retryKey());
+                cache::delete($this->errorKey());
 
                 try {
                     $this->checkNewIncidents(isset($state['incidents']) ? $state['incidents'] : array());
@@ -289,15 +323,85 @@ class oresbe extends eqLogic {
             } catch (Throwable $e) {
                 $this->_refreshError = $e->getMessage();
                 cache::set($this->retryKey(), time(), self::RETRY_DELAY);
+                cache::set($this->errorKey(), json_encode(array('message' => $e->getMessage(), 'at' => time())), 0);
                 log::add(__CLASS__, 'error', $this->getHumanName() . ' : ' . $e->getMessage());
                 if (empty($state)) {
+                    $this->refreshStatus($state);
                     throw $e;
                 }
             }
         }
 
+        $this->refreshStatus($state);
         $this->refreshCommands($state);
         return $state;
+    }
+
+    /*
+     * « Dernière vérification » = date de la dernière réponse ORES réussie,
+     * celle de l'état en cache : un état resservi sans relecture (TTL, backoff,
+     * cache partagé) garde la date du succès dont il vient. L'erreur, elle,
+     * reste levée tant qu'aucune lecture n'a réussi depuis.
+     */
+    private function refreshStatus($_state) {
+        $error = $this->getLastError();
+        $this->_stale = !empty($error);
+        $this->publishCmd('derniere_verification', isset($_state['fetchedAt']) ? date('d/m/Y H:i', (int) $_state['fetchedAt']) : '');
+        $this->publishCmd('erreur', $this->_stale ? 1 : 0);
+        $this->publishCmd('derniere_erreur', $this->_stale
+            ? date('d/m/Y H:i', (int) $error['at']) . ' — ' . $error['message']
+            : '');
+    }
+
+    public static function refreshTtl() {
+        $minutes = (int) config::byKey('refresh_minutes', __CLASS__, self::DEFAULT_REFRESH_MINUTES);
+        return max($minutes, self::MIN_REFRESH_MINUTES) * 60;
+    }
+
+    /* ======================================================================= SANTÉ */
+
+    /*
+     * Page Santé : âge de la dernière lecture réussie et dernière erreur,
+     * lus dans le cache sans interroger ORES. Une lecture est « en retard »
+     * au-delà d'un cycle plus un backoff complet : avant, un échec isolé est
+     * encore en train d'être retenté normalement.
+     */
+    public static function health() {
+        $eqLogics = array_values(array_filter(self::byType(__CLASS__, true), function ($_eq) { return $_eq->isConfigured(); }));
+        $late = self::refreshTtl() + self::RETRY_DELAY;
+        $ages = array();
+        $errors = array();
+        $ok = true;
+        foreach ($eqLogics as $eqLogic) {
+            $state = $eqLogic->getState();
+            if (isset($state['fetchedAt'])) {
+                $age = time() - (int) $state['fetchedAt'];
+                $ages[] = $eqLogic->getHumanName() . ' : ' . date('d/m H:i', (int) $state['fetchedAt'])
+                        . ' (' . sprintf(__('il y a %d min', __FILE__), intdiv($age, 60)) . ')';
+                $ok = $ok && $age <= $late;
+            } else {
+                $ages[] = $eqLogic->getHumanName() . ' : ' . __('jamais', __FILE__);
+                $ok = false;
+            }
+            $error = $eqLogic->getLastError();
+            if (!empty($error)) {
+                $errors[] = $eqLogic->getHumanName() . ' : ' . date('d/m H:i', (int) $error['at']) . ' — ' . $error['message'];
+            }
+        }
+        return array(
+            array(
+                'test'   => __('Dernière lecture réussie', __FILE__),
+                'result' => empty($ages) ? __('Aucun équipement configuré', __FILE__) : htmlspecialchars(implode(' ; ', $ages), ENT_QUOTES),
+                'advice' => $ok ? '' : __('Aucune réponse de l\'API ORES depuis plus d\'un cycle et d\'un backoff : les pannes affichées peuvent être périmées.', __FILE__),
+                'state'  => $ok,
+            ),
+            array(
+                'test'   => __('Erreurs de lecture', __FILE__),
+                'result' => empty($errors) ? __('Aucune', __FILE__) : htmlspecialchars(implode(' ; ', $errors), ENT_QUOTES),
+                'advice' => empty($errors) ? '' : __('Nouvelle tentative une heure après chaque échec ; voir le journal oresbe.', __FILE__),
+                'state'  => empty($errors),
+            ),
+        );
     }
 
     public function getRefreshError() { return $this->_refreshError; }
@@ -306,7 +410,8 @@ class oresbe extends eqLogic {
     /* ======================================================================= API ORES */
 
     private function fetchIncidents() {
-        $breakdowns = self::fetchAllBreakdowns();
+        $fetchedAt  = time();
+        $breakdowns = self::fetchAllBreakdowns($fetchedAt);
         $incidents  = self::filterByAddress(
             $breakdowns,
             $this->getConfiguration('zipcode'),
@@ -315,7 +420,7 @@ class oresbe extends eqLogic {
         );
 
         return array(
-            'fetchedAt' => time(),
+            'fetchedAt' => $fetchedAt,
             'address'   => $this->addressSignature(),
             'incidents' => $incidents,
         );
@@ -330,14 +435,20 @@ class oresbe extends eqLogic {
      * appart'…). 300 s suffisent largement : le cron15 déclenche
      * l'ensemble en l'espace de quelques secondes, c'est le seul moment
      * où plusieurs équipements fetchent au même instant.
+     *
+     * $_fetchedAt reçoit l'heure de la réponse réellement lue chez ORES, pas
+     * celle du passage dans le cache : c'est elle que « Dernière vérification »
+     * doit montrer.
      */
     const RAW_CACHE_TTL = 300;
 
-    public static function fetchAllBreakdowns() {
+    public static function fetchAllBreakdowns(&$_fetchedAt = null) {
+        $_fetchedAt = time();
         $cached = cache::byKey('oresbe::rawBreakdowns')->getValue('');
         if ($cached !== '') {
             $wrap = json_decode($cached, true);
             if (is_array($wrap) && isset($wrap['data']) && is_array($wrap['data'])) {
+                if (isset($wrap['fetchedAt'])) $_fetchedAt = (int) $wrap['fetchedAt'];
                 return $wrap['data'];
             }
         }

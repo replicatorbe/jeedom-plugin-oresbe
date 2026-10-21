@@ -1,7 +1,7 @@
 {
     "id": "oresbe",
     "name": "ORES",
-    "pluginVersion": "0.1",
+    "pluginVersion": "0.1.1",
     "description": {
         "fr_FR": "Surveille les pannes et interruptions planifiées du réseau électrique ORES (Opérateur des Réseaux d'Electricité en Wallonie) pour une adresse précise — code postal, rue, numéro. Détecte les coupures en cours, les interventions planifiées avec ou sans groupe électrogène, les retards, le nombre de clients impactés et la fin prévue. Déclenche des alertes configurables (notification mobile, SMS, message vocal, affichage matrix) à l'apparition d'une panne, et peut jouer des actions miroirs à sa disparition. Le gaz n'est pas couvert : ORES ne publie pas d'API pour les coupures gaz, seul le numéro d'urgence 0800/87.087 fait foi.",
         "en_US": "Monitors outages and planned interruptions on the ORES electricity grid (Walloon distributor) for a precise address — postal code, street, house number. Detects ongoing cuts, planned interventions with or without generator backup, delays, impacted customer count and expected end time. Triggers configurable alerts (mobile notification, SMS, spoken message, matrix display) when an outage appears, and can play mirror actions when it clears. Gas is not covered: ORES provides no public API for gas outages, only the emergency number 0800/87.087."

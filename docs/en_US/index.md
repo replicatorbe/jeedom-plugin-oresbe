@@ -40,6 +40,9 @@ comparison is normalised), and house number (e.g. `3A`). The
 | **Generator planned** | info / binary | backup generator planned |
 | **ORES page** | info / string | link to ORES generic page |
 | **Details (JSON)** | info / string | full state |
+| **Last check** | info / string | date of the last successful ORES API response |
+| **API error** | info / binary | 1 while the last read failed (outages shown are then those of the last check) |
+| **Last error** | info / string | date and message of the current failure, empty otherwise |
 | **Refresh** | action | force immediate reload |
 
 ## Built-in alerts

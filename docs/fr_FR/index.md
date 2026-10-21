@@ -62,6 +62,9 @@ limitation côté distributeur, pas du plugin.
 | **Groupe électrogène prévu** | info / binary | 1 si un générateur de secours est planifié |
 | **Page ORES** | info / string | lien vers la page générique ores.be |
 | **Détails (JSON)** | info / string | état complet pour scénarios avancés |
+| **Dernière vérification** | info / string | date de la dernière réponse réussie de l'API ORES |
+| **Erreur API** | info / binary | 1 tant que la dernière lecture a échoué (les pannes affichées sont alors celles de la dernière vérification) |
+| **Dernière erreur** | info / string | date et message de l'échec en cours, vide sinon |
 | **Rafraîchir** | action | force une relecture immédiate |
 
 ## Alertes intégrées

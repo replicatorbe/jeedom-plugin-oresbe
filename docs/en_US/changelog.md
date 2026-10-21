@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1
+
+- New **Last check**, **API error** and **Last error** commands: when the ORES API
+  stops answering, the previous state is still shown but no longer silently —
+  the date of the last successful read is visible and the error stays raised
+  until the next one, backoff included.
+- During an error, the republished state no longer counts as a
+  communication: the device timeout, set to 60 minutes when empty, reports a
+  stuck read.
+- Health page: age of the last successful read and last error of each
+  device.
+
 ## 0.1 — initial release
 
 - Monitors ORES electricity outages and planned interruptions for a
