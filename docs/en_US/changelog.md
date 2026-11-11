@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2
+
+- An isolated failed read of the ORES API is no longer logged as an error, and
+  so no longer creates an entry in the message centre: it is a warning. The
+  error is only raised on the third failure in a row, once, and the return to
+  normal is then reported in the log.
+- A failed read with no known state is no longer logged twice.
+- The message the core posts for that error in the message centre is removed
+  on the first successful read.
+
 ## 0.1.1
 
 - New **Last check**, **API error** and **Last error** commands: when the ORES API

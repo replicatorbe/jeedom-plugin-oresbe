@@ -1,5 +1,15 @@
 # Journal des versions
 
+## 0.1.2
+
+- Une lecture ratée isolée de l'API ORES n'est plus journalisée en erreur, et
+  ne crée donc plus de message dans le centre de messages : c'est un
+  avertissement. L'erreur n'est levée qu'au troisième échec d'affilée, une
+  seule fois, et le retour à la normale est alors signalé dans le journal.
+- Une lecture en échec sans état connu n'est plus journalisée deux fois.
+- Le message que le coeur pose pour cette erreur au centre de messages est
+  retiré au premier succès.
+
 ## 0.1.1
 
 - Nouvelles commandes **Dernière vérification**, **Erreur API** et **Dernière

@@ -35,6 +35,12 @@ class oresbe extends eqLogic {
     const FORCE_MIN_INTERVAL      = 300;
     const RETRY_DELAY             = 3600;
 
+    /* Une lecture ratée isolée (DNS, délai) n'est pas une panne : journalisée
+     * en « error », chacune créait un message dans le centre de messages pour
+     * rien. On avertit, et l'erreur ne tombe qu'au troisième échec d'affilée,
+     * une seule fois. */
+    const FAILURE_ERROR_AFTER     = 3;
+
     const SENT_MEMORY = 604800;  // 7 jours : couvre les plus longues interventions planifiées
 
     /* Délai sans communication au-delà duquel le cœur signale l'équipement :
@@ -63,7 +69,10 @@ class oresbe extends eqLogic {
             try {
                 $eqLogic->update();
             } catch (Throwable $e) {
-                log::add(__CLASS__, 'error', $eqLogic->getHumanName() . ' : ' . $e->getMessage());
+                // Une lecture ratée est déjà journalisée par update(), au bon niveau.
+                if ($eqLogic->getRefreshError() === '') {
+                    log::add(__CLASS__, 'error', $eqLogic->getHumanName() . ' : ' . $e->getMessage());
+                }
             }
         }
     }
@@ -124,7 +133,9 @@ class oresbe extends eqLogic {
                 }
                 $this->update(false);
             } catch (Throwable $e) {
-                log::add(__CLASS__, 'error', $this->getHumanName() . ' : ' . $e->getMessage());
+                if ($this->getRefreshError() === '') {
+                    log::add(__CLASS__, 'error', $this->getHumanName() . ' : ' . $e->getMessage());
+                }
             }
         }
     }
@@ -161,11 +172,48 @@ class oresbe extends eqLogic {
     private function retryKey() { return 'oresbe::retry::' . $this->getId(); }
     private function seenKey()  { return 'oresbe::seen::'  . $this->getId(); }
     private function errorKey() { return 'oresbe::error::' . $this->getId(); }
+    private function failuresKey() { return 'oresbe::failures::' . $this->getId(); }
 
     private function clearState() {
         cache::delete($this->stateKey());
         cache::delete($this->retryKey());
         cache::delete($this->errorKey());
+        cache::delete($this->failuresKey());
+        message::removeAll(__CLASS__, $this->failureMessageId());
+    }
+
+    private function failureMessageId() {
+        return 'network' . $this->getId();
+    }
+
+    /* Avertissement pour un échec isolé, erreur au troisième d'affilée. */
+    private function noteFailure($_message) {
+        $count = (int) cache::byKey($this->failuresKey())->getValue(0) + 1;
+        cache::set($this->failuresKey(), $count, 0);
+        if ($count === self::FAILURE_ERROR_AFTER) {
+            /* Identifiant stable : le message que le coeur pose pour cette
+             * erreur (option « message à chaque erreur ») est retiré au
+             * premier succès, au lieu de rester après le retour du service. */
+            log::add(__CLASS__, 'error', $this->getHumanName() . ' : '
+                     . sprintf(__('lecture en échec %d fois de suite :', __FILE__), $count) . ' ' . $_message,
+                     $this->failureMessageId());
+            return;
+        }
+        log::add(__CLASS__, 'warning', $this->getHumanName() . ' : ' . $_message
+                 . ' (' . sprintf(__('échec n° %d', __FILE__), $count) . ')');
+    }
+
+    /* Première lecture aboutie : le compteur repart de zéro ; le retour n'est
+     * annoncé que si l'erreur l'avait été. */
+    private function clearFailures() {
+        $count = (int) cache::byKey($this->failuresKey())->getValue(0);
+        if ($count === 0) return;
+        cache::delete($this->failuresKey());
+        if ($count >= self::FAILURE_ERROR_AFTER) {
+            message::removeAll(__CLASS__, $this->failureMessageId());
+            log::add(__CLASS__, 'info', $this->getHumanName() . ' : '
+                     . sprintf(__('lecture rétablie après %d échecs.', __FILE__), $count));
+        }
     }
 
     /* Dernière erreur de lecture, { message, at }, ou tableau vide si la
@@ -314,6 +362,7 @@ class oresbe extends eqLogic {
                 cache::set($this->stateKey(), json_encode($state), 0);
                 cache::delete($this->retryKey());
                 cache::delete($this->errorKey());
+                $this->clearFailures();
 
                 try {
                     $this->checkNewIncidents(isset($state['incidents']) ? $state['incidents'] : array());
@@ -324,7 +373,7 @@ class oresbe extends eqLogic {
                 $this->_refreshError = $e->getMessage();
                 cache::set($this->retryKey(), time(), self::RETRY_DELAY);
                 cache::set($this->errorKey(), json_encode(array('message' => $e->getMessage(), 'at' => time())), 0);
-                log::add(__CLASS__, 'error', $this->getHumanName() . ' : ' . $e->getMessage());
+                $this->noteFailure($e->getMessage());
                 if (empty($state)) {
                     $this->refreshStatus($state);
                     throw $e;
